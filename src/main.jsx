@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   LayoutDashboard, ClipboardList, Users, Boxes, FileText, UserCog,
-  Settings, Plus, Save, Trash2, Download, Building2, Search, LogOut, LockKeyhole, History
+  Settings, Plus, Save, Trash2, Download, Building2, Search, LogOut, LockKeyhole, History, WalletCards, Printer
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -15,6 +15,7 @@ const menu = [
   ['customers', 'Müşteriler', Users],
   ['inventory', 'Stok', Boxes],
   ['quotes', 'Teklif Hazırla', FileText],
+  ['finance', 'Ön Muhasebe', WalletCards],
   ['operators', 'Operatörler', UserCog],
   ['history', 'İşlem Geçmişi', History],
   ['settings', 'Ayarlar', Settings],
@@ -60,6 +61,35 @@ const defaultSettings = {
   logo_data_url: ''
 }
 
+
+const CODE39 = {
+  '0':'nnnwwnwnn','1':'wnnwnnnnw','2':'nnwwnnnnw','3':'wnwwnnnnn','4':'nnnwwnnnw',
+  '5':'wnnwwnnnn','6':'nnwwwnnnn','7':'nnnwnnwnw','8':'wnnwnnwnn','9':'nnwwnnwnn',
+  'A':'wnnnnwnnw','B':'nnwnnwnnw','C':'wnwnnwnnn','D':'nnnnwwnnw','E':'wnnnwwnnn',
+  'F':'nnwnwwnnn','G':'nnnnnwwnw','H':'wnnnnwwnn','I':'nnwnnwwnn','J':'nnnnwwwnn',
+  'K':'wnnnnnnww','L':'nnwnnnnww','M':'wnwnnnnwn','N':'nnnnwnnww','O':'wnnnwnnwn',
+  'P':'nnwnwnnwn','Q':'nnnnnnwww','R':'wnnnnnwwn','S':'nnwnnnwwn','T':'nnnnwnwwn',
+  'U':'wwnnnnnnw','V':'nwwnnnnnw','W':'wwwnnnnnn','X':'nwnnwnnnw','Y':'wwnnwnnnn',
+  'Z':'nwwnwnnnn','-':'nwnnnnwnw','.':'wwnnnnwnn',' ':'nwwnnnwnn','*':'nwnnwnwnn'
+}
+
+function code39Svg(value) {
+  const text = `*${String(value).toUpperCase().replace(/[^0-9A-Z. -]/g, '')}*`
+  const narrow = 2, wide = 5, gap = 2, height = 55
+  let x = 4
+  const bars = []
+  for (const ch of text) {
+    const pattern = CODE39[ch] || CODE39['-']
+    pattern.split('').forEach((kind, index) => {
+      const width = kind === 'w' ? wide : narrow
+      if (index % 2 === 0) bars.push(`<rect x="${x}" y="2" width="${width}" height="${height}" fill="#000"/>`)
+      x += width
+    })
+    x += gap
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${x+4} ${height+20}" role="img"><g>${bars.join('')}</g><text x="${(x+4)/2}" y="${height+16}" text-anchor="middle" font-family="Arial" font-size="12">${value}</text></svg>`
+}
+
 function currency(value) {
   return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' })
     .format(Number(value || 0))
@@ -88,6 +118,7 @@ function App() {
   const [operators, setOperators] = useState([])
   const [quotes, setQuotes] = useState([])
   const [logs, setLogs] = useState([])
+  const [transactions, setTransactions] = useState([])
   const [settings, setSettings] = useState(defaultSettings)
 
   const reload = async () => {
@@ -97,16 +128,17 @@ function App() {
     }
     setLoading(true)
     try {
-      const [j, c, i, o, q, l, s] = await Promise.all([
+      const [j, c, i, o, q, l, t, s] = await Promise.all([
         query('jobs'),
         query('customers'),
         query('inventory'),
         query('operators'),
         query('quotes'),
         query('audit_logs'),
+        query('finance_transactions', 'transaction_date'),
         supabase.from('company_settings').select('*').limit(1).maybeSingle()
       ])
-      setJobs(j); setCustomers(c); setInventory(i); setOperators(o); setQuotes(q); setLogs(l)
+      setJobs(j); setCustomers(c); setInventory(i); setOperators(o); setQuotes(q); setLogs(l); setTransactions(t)
       if (s.data) setSettings({ ...defaultSettings, ...s.data })
     } catch (err) {
       setNotice(err.message)
@@ -210,11 +242,12 @@ function App() {
         {notice && <div className="notice">{notice}</div>}
         {loading ? <div className="loading">Yükleniyor…</div> : (
           <>
-            {page === 'dashboard' && <Dashboard jobs={jobs} inventory={inventory} quotes={quotes} customers={customers} />}
+            {page === 'dashboard' && <Dashboard jobs={jobs} inventory={inventory} quotes={quotes} customers={customers} transactions={transactions} />}
             {page === 'jobs' && <Jobs jobs={jobs} customers={customers} operators={operators} logs={logs} reload={reload} flash={flash} />}
             {page === 'customers' && <Customers customers={customers} logs={logs} reload={reload} flash={flash} />}
             {page === 'inventory' && <Inventory inventory={inventory} logs={logs} reload={reload} flash={flash} />}
             {page === 'quotes' && <Quotes quotes={quotes} customers={customers} settings={settings} logs={logs} reload={reload} flash={flash} />}
+            {page === 'finance' && <Finance transactions={transactions} customers={customers} logs={logs} reload={reload} flash={flash} />}
             {page === 'history' && <AuditHistory logs={logs} />}
             {page === 'operators' && <Operators operators={operators} reload={reload} flash={flash} />}
             {page === 'settings' && <SettingsPage settings={settings} setSettings={setSettings} flash={flash} />}
@@ -267,7 +300,7 @@ function LoginPage({ flash }) {
   )
 }
 
-function Dashboard({ jobs, inventory, quotes, customers }) {
+function Dashboard({ jobs, inventory, quotes, customers, transactions=[] }) {
   const delayed = jobs.filter(j => j.due_date && new Date(j.due_date) < new Date() && j.status !== 'Tamamlandı').length
   const active = jobs.filter(j => j.status !== 'Tamamlandı').length
   const lowStock = inventory.filter(i => Number(i.quantity) <= Number(i.critical_level)).length
@@ -316,19 +349,40 @@ function creatorFor(logs, table, recordId) {
   return log?.user_name || log?.user_email || '-'
 }
 
+function dailyNumber(prefix, records, field) {
+  const now = new Date()
+  const dd = String(now.getDate()).padStart(2, '0')
+  const mm = String(now.getMonth() + 1).padStart(2, '0')
+  const yy = String(now.getFullYear()).slice(-2)
+  const base = `${prefix}-${dd}${mm}${yy}-`
+  const max = records
+    .map(r => String(r[field] || ''))
+    .filter(v => v.startsWith(base))
+    .map(v => Number(v.slice(-3)))
+    .filter(Number.isFinite)
+    .reduce((a,b) => Math.max(a,b), 0)
+  return `${base}${String(max + 1).padStart(3, '0')}`
+}
+
 function Jobs({ jobs, customers, operators, logs, reload, flash }) {
-  const [form, setForm] = useState(emptyJob)
+  const makeEmpty = () => ({ ...emptyJob, job_no: dailyNumber('IE', jobs, 'job_no') })
+  const [form, setForm] = useState(makeEmpty)
   const [search, setSearch] = useState('')
   const filtered = jobs.filter(j =>
     `${j.job_no} ${j.part_name} ${j.material}`.toLowerCase().includes(search.toLowerCase())
   )
+
+  useEffect(() => {
+    if (!form.part_name) setForm(current => ({ ...current, job_no: dailyNumber('IE', jobs, 'job_no') }))
+  }, [jobs])
 
   const save = async (e) => {
     e.preventDefault()
     const payload = { ...form, quantity: Number(form.quantity || 0), thickness: Number(form.thickness || 0) || null }
     const { error } = await supabase.from('jobs').insert(payload)
     if (error) return flash(error.message)
-    setForm(emptyJob); flash('İş emri kaydedildi.'); reload()
+    setForm({ ...emptyJob, job_no: dailyNumber('IE', [...jobs, payload], 'job_no') })
+    flash('İş emri kaydedildi.'); reload()
   }
 
   const remove = async id => {
@@ -338,11 +392,29 @@ function Jobs({ jobs, customers, operators, logs, reload, flash }) {
     reload()
   }
 
+  const printLabel = job => {
+    const customer = customers.find(c => c.id === job.customer_id)
+    const svgMarkup = code39Svg(job.job_no)
+    const popup = window.open('', '_blank', 'width=500,height=500')
+    if (!popup) return flash('Etiket penceresi engellendi. Açılır pencereye izin ver.')
+    popup.document.write(`<!doctype html><html><head><title>${job.job_no}</title><style>
+      @page{size:80mm 50mm;margin:2mm} body{font-family:Arial;margin:0}.label{width:76mm;height:46mm;padding:2mm;box-sizing:border-box;border:1px solid #ddd}
+      h2{font-size:15px;margin:0 0 4px}.row{font-size:11px;margin:2px 0}.barcode{text-align:center;margin-top:4px}.barcode svg{max-width:100%;height:18mm}
+      @media print{.label{border:0}}
+    </style></head><body><div class="label"><h2>LASERCE METAL</h2>
+      <div class="row"><b>Müşteri:</b> ${customer?.company_name || '-'}</div>
+      <div class="row"><b>Parça:</b> ${job.part_name} &nbsp; <b>Adet:</b> ${job.quantity}</div>
+      <div class="row"><b>Malzeme:</b> ${job.material || '-'} ${job.thickness ? job.thickness + ' mm' : ''}</div>
+      <div class="row"><b>Termin:</b> ${dateText(job.due_date)}</div>
+      <div class="barcode">${svgMarkup}</div></div><script>window.onload=()=>window.print()<\/script></body></html>`)
+    popup.document.close()
+  }
+
   return (
     <>
       <FormPanel title="Yeni İş Emri">
         <form className="form-grid" onSubmit={save}>
-          <Input label="İş No" value={form.job_no} onChange={v => setForm({...form, job_no:v})} required />
+          <Input label="İş No (Otomatik)" value={form.job_no} onChange={()=>{}} readOnly />
           <Select label="Müşteri" value={form.customer_id} onChange={v => setForm({...form, customer_id:v})}
             options={customers.map(c => [c.id, c.company_name])} />
           <Input label="Parça Adı" value={form.part_name} onChange={v => setForm({...form, part_name:v})} required />
@@ -362,12 +434,12 @@ function Jobs({ jobs, customers, operators, logs, reload, flash }) {
 
       <ListHeader title="İş Emirleri" search={search} setSearch={setSearch} />
       <section className="panel">
-        <Table headers={['İş No','Parça','Malzeme','Adet','Termin','Durum','Kaydeden','']}>
+        <Table headers={['İş No','Parça','Malzeme','Adet','Termin','Durum','Kaydeden','İşlemler']}>
           {filtered.map(j => <tr key={j.id}>
-            <td>{j.job_no}</td><td>{j.part_name}</td><td>{j.material} {j.thickness ? `${j.thickness} mm` : ''}</td>
+            <td><strong>{j.job_no}</strong></td><td>{j.part_name}</td><td>{j.material} {j.thickness ? `${j.thickness} mm` : ''}</td>
             <td>{j.quantity}</td><td>{dateText(j.due_date)}</td><td><Badge>{j.status}</Badge></td>
             <td>{creatorFor(logs, 'jobs', j.id)}</td>
-            <td><button className="icon danger-btn" onClick={() => remove(j.id)}><Trash2 size={16}/></button></td>
+            <td><div className="table-actions"><button className="secondary small" onClick={() => printLabel(j)}><Printer size={15}/> Etiket</button><button className="icon danger-btn" onClick={() => remove(j.id)}><Trash2 size={16}/></button></div></td>
           </tr>)}
         </Table>
       </section>
@@ -453,7 +525,11 @@ function Inventory({ inventory, logs, reload, flash }) {
 }
 
 function Quotes({ quotes, customers, settings, logs, reload, flash }) {
-  const [form, setForm] = useState(emptyQuote)
+  const [form, setForm] = useState(() => ({ ...emptyQuote, quote_no: dailyNumber('TK', quotes, 'quote_no') }))
+
+  useEffect(() => {
+    if (!form.customer_id && !form.items.some(x => x.description)) setForm(current => ({ ...current, quote_no: dailyNumber('TK', quotes, 'quote_no') }))
+  }, [quotes])
 
   const totals = useMemo(() => {
     const subtotal = form.items.reduce((s, x) => s + Number(x.quantity || 0) * Number(x.unit_price || 0), 0)
@@ -497,6 +573,7 @@ function Quotes({ quotes, customers, settings, logs, reload, flash }) {
     }))
     const itemResult = await supabase.from('quote_items').insert(items)
     if (itemResult.error) return flash(itemResult.error.message)
+    setForm({ ...emptyQuote, quote_no: dailyNumber('TK', [...quotes, payload], 'quote_no') })
     flash('Teklif kaydedildi.'); reload()
   }
 
@@ -561,7 +638,7 @@ function Quotes({ quotes, customers, settings, logs, reload, flash }) {
         </div>
 
         <div className="form-grid">
-          <Input label="Teklif No" value={form.quote_no} onChange={v => setForm({...form, quote_no:v})} />
+          <Input label="Teklif No (Otomatik)" value={form.quote_no} onChange={()=>{}} readOnly />
           <Select label="Müşteri" value={form.customer_id} onChange={v => setForm({...form, customer_id:v})}
             options={customers.map(c => [c.id, c.company_name])} />
           <Input label="Geçerlilik Tarihi" type="date" value={form.valid_until} onChange={v => setForm({...form, valid_until:v})} />
@@ -597,14 +674,42 @@ function Quotes({ quotes, customers, settings, logs, reload, flash }) {
 
       <section className="panel">
         <h2>Teklif Geçmişi</h2>
-        <Table headers={['Teklif No','Tarih','Geçerlilik','Toplam','Kaydeden']}>
+        <Table headers={['Teklif No','Tarih','Geçerlilik','Toplam','Kaydeden','']}>
           {quotes.map(q => <tr key={q.id}>
-            <td>{q.quote_no}</td><td>{dateText(q.created_at)}</td><td>{dateText(q.valid_until)}</td><td>{currency(q.grand_total)}</td><td>{creatorFor(logs, 'quotes', q.id)}</td>
+            <td><strong>{q.quote_no}</strong></td><td>{dateText(q.created_at)}</td><td>{dateText(q.valid_until)}</td><td>{currency(q.grand_total)}</td><td>{creatorFor(logs, 'quotes', q.id)}</td>
+            <td><button className="icon danger-btn" onClick={async()=>{if(!confirm('Bu teklif silinsin mi?'))return;const {error}=await supabase.from('quotes').delete().eq('id',q.id);if(error)return flash(error.message);flash('Teklif silindi.');reload()}}><Trash2 size={16}/></button></td>
           </tr>)}
         </Table>
       </section>
     </>
   )
+}
+
+function Finance({ transactions, customers, logs, reload, flash }) {
+  const blank = { type:'Gider', account:'Kasa', category:'', amount:'', transaction_date:new Date().toISOString().slice(0,10), customer_id:'', description:'' }
+  const [form,setForm]=useState(blank)
+  const income=transactions.filter(t=>t.type==='Gelir').reduce((s,t)=>s+Number(t.amount||0),0)
+  const expense=transactions.filter(t=>t.type==='Gider').reduce((s,t)=>s+Number(t.amount||0),0)
+  const save=async e=>{e.preventDefault();const payload={...form,amount:Number(form.amount||0),customer_id:form.customer_id||null};const {error}=await supabase.from('finance_transactions').insert(payload);if(error)return flash(error.message);setForm(blank);flash('Muhasebe kaydı eklendi.');reload()}
+  const remove=async id=>{if(!confirm('Bu muhasebe kaydı silinsin mi?'))return;const {error}=await supabase.from('finance_transactions').delete().eq('id',id);if(error)return flash(error.message);reload()}
+  return <>
+    <div className="stats"><Stat title="Toplam Gelir" value={currency(income)}/><Stat title="Toplam Gider" value={currency(expense)} danger/><Stat title="Net Bakiye" value={currency(income-expense)} danger={income-expense<0}/></div>
+    <FormPanel title="Gelir / Gider Kaydı">
+      <form className="form-grid" onSubmit={save}>
+        <Select label="İşlem Türü" value={form.type} onChange={v=>setForm({...form,type:v})} options={['Gelir','Gider'].map(x=>[x,x])}/>
+        <Select label="Hesap" value={form.account} onChange={v=>setForm({...form,account:v})} options={['Kasa','Banka','Kredi Kartı'].map(x=>[x,x])}/>
+        <Input label="Kategori" value={form.category} onChange={v=>setForm({...form,category:v})} required/>
+        <Input label="Tutar" type="number" value={form.amount} onChange={v=>setForm({...form,amount:v})} required/>
+        <Input label="Tarih" type="date" value={form.transaction_date} onChange={v=>setForm({...form,transaction_date:v})}/>
+        <Select label="Müşteri / Cari" value={form.customer_id} onChange={v=>setForm({...form,customer_id:v})} options={customers.map(c=>[c.id,c.company_name])}/>
+        <Input label="Açıklama" value={form.description} onChange={v=>setForm({...form,description:v})}/>
+        <button className="primary"><Save size={17}/> Kaydet</button>
+      </form>
+    </FormPanel>
+    <section className="panel"><h2>Hareketler</h2><Table headers={['Tarih','Tür','Hesap','Kategori','Açıklama','Tutar','Kaydeden','']}>
+      {transactions.map(t=><tr key={t.id}><td>{dateText(t.transaction_date)}</td><td><Badge danger={t.type==='Gider'}>{t.type}</Badge></td><td>{t.account}</td><td>{t.category}</td><td>{t.description}</td><td><strong>{currency(t.amount)}</strong></td><td>{creatorFor(logs,'finance_transactions',t.id)}</td><td><button className="icon danger-btn" onClick={()=>remove(t.id)}><Trash2 size={16}/></button></td></tr>)}
+    </Table></section>
+  </>
 }
 
 function Operators({ operators, reload, flash }) {
@@ -651,7 +756,7 @@ function AuditHistory({ logs }) {
   const actionText = { INSERT: 'Oluşturdu', UPDATE: 'Güncelledi', DELETE: 'Sildi' }
   const tableText = {
     customers: 'Müşteri', jobs: 'İş Emri', inventory: 'Stok', quotes: 'Teklif',
-    quote_items: 'Teklif Satırı', operators: 'Personel', company_settings: 'Firma Ayarı'
+    quote_items: 'Teklif Satırı', operators: 'Personel', company_settings: 'Firma Ayarı', finance_transactions: 'Muhasebe Kaydı'
   }
   const filtered = logs.filter(log =>
     `${log.user_name} ${log.user_email} ${log.record_label} ${log.table_name} ${log.action}`
@@ -723,8 +828,8 @@ function ListHeader({ title, search, setSearch }) {
   return <div className="list-header"><h2>{title}</h2><label className="search"><Search size={17}/><input placeholder="Ara…" value={search} onChange={e => setSearch(e.target.value)} /></label></div>
 }
 
-function Input({ label, value, onChange, type='text', required=false }) {
-  return <label className="field"><span>{label}</span><input type={type} value={value ?? ''} onChange={e => onChange(e.target.value)} required={required} /></label>
+function Input({ label, value, onChange, type='text', required=false, readOnly=false }) {
+  return <label className="field"><span>{label}</span><input type={type} value={value ?? ''} onChange={e => onChange(e.target.value)} required={required} readOnly={readOnly} /></label>
 }
 
 function Select({ label, value, onChange, options }) {
