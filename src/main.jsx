@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   LayoutDashboard, ClipboardList, Users, Boxes, FileText, UserCog,
-  Settings, Plus, Save, Trash2, Download, Building2, Search
+  Settings, Plus, Save, Trash2, Download, Building2, Search, LogOut, LockKeyhole
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -75,6 +75,8 @@ async function query(table, order = 'created_at') {
 }
 
 function App() {
+  const [session, setSession] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
   const [page, setPage] = useState('dashboard')
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState('')
@@ -86,7 +88,11 @@ function App() {
   const [settings, setSettings] = useState(defaultSettings)
 
   const reload = async () => {
-    if (!supabaseConfigured) {
+    if (authLoading) {
+    return <div className="setup-page"><div className="setup-card"><p>Yükleniyor…</p></div></div>
+  }
+
+  if (!supabaseConfigured) {
       setLoading(false)
       return
     }
@@ -109,7 +115,25 @@ function App() {
     }
   }
 
-  useEffect(() => { reload() }, [])
+  useEffect(() => {
+    if (!supabaseConfigured) {
+      setAuthLoading(false)
+      return
+    }
+
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session || null)
+      setAuthLoading(false)
+      if (data.session) reload()
+    })
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession || null)
+      if (nextSession) reload()
+    })
+
+    return () => listener.subscription.unsubscribe()
+  }, [])
 
   const flash = (message) => {
     setNotice(message)
@@ -129,6 +153,15 @@ function App() {
         </div>
       </div>
     )
+  }
+
+  if (!session) {
+    return <LoginPage flash={flash} />
+  }
+
+  const signOut = async () => {
+    await supabase.auth.signOut()
+    setSession(null)
   }
 
   return (
@@ -159,7 +192,10 @@ function App() {
             <h1>{menu.find(x => x[0] === page)?.[1]}</h1>
             <p>{settings.slogan}</p>
           </div>
-          <button className="secondary" onClick={reload}>Yenile</button>
+          <div className="actions">
+            <button className="secondary" onClick={reload}>Yenile</button>
+            <button className="secondary" onClick={signOut}><LogOut size={17}/> Çıkış</button>
+          </div>
         </header>
 
         {notice && <div className="notice">{notice}</div>}
@@ -175,6 +211,48 @@ function App() {
           </>
         )}
       </main>
+    </div>
+  )
+}
+
+
+function LoginPage({ flash }) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [errorText, setErrorText] = useState('')
+
+  const login = async (e) => {
+    e.preventDefault()
+    setBusy(true)
+    setErrorText('')
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    setBusy(false)
+    if (error) setErrorText('E-posta veya şifre hatalı.')
+  }
+
+  return (
+    <div className="login-page">
+      <form className="login-card" onSubmit={login}>
+        <div className="login-icon"><LockKeyhole size={28}/></div>
+        <h1>Laserce ERP</h1>
+        <p>Yetkili kullanıcı girişi</p>
+
+        <label className="field">
+          <span>E-posta</span>
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email" />
+        </label>
+
+        <label className="field">
+          <span>Şifre</span>
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" />
+        </label>
+
+        {errorText && <div className="login-error">{errorText}</div>}
+        <button className="primary login-button" disabled={busy}>
+          {busy ? 'Giriş yapılıyor…' : 'Giriş Yap'}
+        </button>
+      </form>
     </div>
   )
 }

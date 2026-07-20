@@ -106,3 +106,43 @@ th { color: #6b7280; font-size: 12px; }
   .quote-row { grid-template-columns: 1fr 1fr; }
   .item-delete { align-self: end; }
 }
+
+
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background:
+    radial-gradient(circle at top left, rgba(255,255,255,.08), transparent 35%),
+    #111827;
+}
+.login-card {
+  width: min(100%, 420px);
+  background: white;
+  border-radius: 18px;
+  padding: 32px;
+  box-shadow: 0 24px 70px rgba(0,0,0,.28);
+}
+.login-card h1 { margin: 12px 0 4px; text-align: center; }
+.login-card > p { margin: 0 0 24px; color: #6b7280; text-align: center; }
+.login-card .field { margin-bottom: 14px; }
+.login-icon {
+  width: 58px;
+  height: 58px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto;
+  background: #111827;
+  color: white;
+}
+.login-button { width: 100%; margin-top: 8px; }
+.login-error {
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 10px 12px;
+  border-radius: 9px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
