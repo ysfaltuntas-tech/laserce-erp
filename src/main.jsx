@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import html2canvas from 'html2canvas'
 import { supabase, supabaseConfigured } from './supabase'
 import './styles.css'
 
@@ -577,53 +578,86 @@ function Quotes({ quotes, customers, settings, logs, reload, flash }) {
     flash('Teklif kaydedildi.'); reload()
   }
 
-  const pdf = () => {
+  const pdf = async () => {
     const customer = customers.find(c => c.id === form.customer_id)
-    const doc = new jsPDF()
-    if (settings.logo_data_url) {
-      try { doc.addImage(settings.logo_data_url, 'PNG', 14, 10, 35, 20) } catch {}
+    const safe = value => String(value ?? '-').replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]))
+    const money = value => new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0)) + ' ₺'
+    const rows = form.items.map((x, index) => `
+      <tr>
+        <td class="center">${index + 1}</td>
+        <td>${safe(x.description)}</td>
+        <td class="center">${safe(x.quantity)}</td>
+        <td class="center">${safe(x.unit)}</td>
+        <td class="right">${money(x.unit_price)}</td>
+        <td class="right">${money(Number(x.quantity || 0) * Number(x.unit_price || 0))}</td>
+      </tr>`).join('')
+
+    const sheet = document.createElement('div')
+    sheet.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;height:1123px;background:#fff;z-index:-1;'
+    sheet.innerHTML = `
+      <style>
+        .q-page{width:794px;height:1123px;padding:38px 46px 28px;background:#fff;color:#10243a;font-family:Arial,Helvetica,sans-serif;position:relative;box-sizing:border-box;overflow:hidden}
+        .q-topbar{position:absolute;left:0;top:0;width:100%;height:17px;background:linear-gradient(110deg,#10283d 0 67%,#2eae54 67%)}
+        .q-footerbar{position:absolute;left:0;bottom:0;width:100%;height:17px;background:linear-gradient(70deg,#2eae54 0 37%,#10283d 37%)}
+        .q-header{display:flex;justify-content:space-between;gap:30px;margin-top:20px}
+        .q-brand{width:48%}.q-logo{width:205px;height:78px;object-fit:contain;object-position:left center;display:block;margin-bottom:7px}
+        .q-brand h1{font-size:27px;margin:0;color:#10243a}.q-brand p{font-size:15px;color:#718096;margin:5px 0 0}.green-line{width:68px;border-top:2px solid #2eae54;margin-top:12px}
+        .q-title{width:42%}.q-title h2{margin:0 0 14px;text-align:right;font-size:31px;letter-spacing:.2px;color:#10243a}.q-title h2 span{color:#2eae54}
+        .meta{border:1px solid #d8dee7;border-radius:9px;padding:10px 14px;box-shadow:0 1px 4px rgba(16,36,58,.05)}.meta-row{display:flex;justify-content:space-between;gap:14px;padding:6px 0;font-size:12px}.meta-row b{font-weight:700}
+        .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-top:34px}.section-title{font-weight:800;font-size:14px;color:#169744;border-bottom:2px solid #2eae54;padding-bottom:6px;margin-bottom:12px}.section-title.blue{color:#1765a8;border-color:#1765a8}
+        .detail-row{display:grid;grid-template-columns:92px 10px 1fr;font-size:12.5px;padding:6px 0}.detail-row b{font-weight:700}.intro{height:126px;border:1px solid #82b5e0;border-radius:8px;padding:17px 19px;font-size:12.5px;line-height:1.8;background:#fbfdff;box-sizing:border-box}
+        .items{width:100%;border-collapse:separate;border-spacing:0;margin-top:28px;font-size:12px;table-layout:fixed;border:1px solid #d9e0e7;border-radius:8px;overflow:hidden}.items th{background:#123d5c;color:white;padding:11px 8px;font-size:11.5px}.items td{padding:11px 8px;border-right:1px solid #e1e6eb;border-bottom:1px solid #edf0f3;height:38px}.items tr:nth-child(even) td{background:#f7f8fa}.items th:last-child,.items td:last-child{border-right:0}.items th:nth-child(1){width:7%}.items th:nth-child(2){width:30%}.items th:nth-child(3){width:13%}.items th:nth-child(4){width:13%}.items th:nth-child(5){width:17%}.items th:nth-child(6){width:20%}.center{text-align:center}.right{text-align:right}
+        .summary{width:330px;margin:14px 0 0 auto;border:1px solid #d7dde5;border-radius:8px;overflow:hidden;font-size:12.5px}.sum-row{display:grid;grid-template-columns:1fr 1fr}.sum-row div{padding:8px 12px;border-bottom:1px solid #e1e5ea}.sum-row div:last-child{text-align:right;border-left:1px solid #e1e5ea}.sum-row:last-child div{border-bottom:0}.sum-row.grand{background:#ecf9ef;color:#159642;font-weight:800;font-size:15px}
+        .bottom-grid{display:grid;grid-template-columns:1.2fr .9fr;gap:50px;margin-top:38px}.note-title,.sign-title{font-size:13px;font-weight:800;padding-bottom:7px;border-bottom:2px solid}.note-title{color:#159642;border-color:#2eae54}.sign-title{color:#1765a8;border-color:#1765a8}.note-text{font-size:11.5px;line-height:1.65;margin-top:14px}.sign-line{border-bottom:2px dotted #aeb7c2;width:170px;margin:64px auto 0}
+        .contact{position:absolute;left:46px;right:46px;bottom:39px;border-top:1px solid #dfe4e9;padding-top:12px;display:flex;justify-content:space-between;gap:10px;font-size:10.5px;color:#25374a}.contact span{white-space:nowrap}
+      </style>
+      <div class="q-page">
+        <div class="q-topbar"></div>
+        <div class="q-header">
+          <div class="q-brand">
+            ${settings.logo_data_url ? `<img class="q-logo" src="${settings.logo_data_url}">` : ''}
+            <h1>${safe(settings.company_name || 'Laserce Metal')}</h1>
+            <p>${safe(settings.slogan || 'Metalin Sanatla Buluşması')}</p><div class="green-line"></div>
+          </div>
+          <div class="q-title"><h2>FİYAT <span>TEKLİFİ</span></h2>
+            <div class="meta">
+              <div class="meta-row"><span>Teklif No</span><b>${safe(form.quote_no || '-')}</b></div>
+              <div class="meta-row"><span>Tarih</span><b>${safe(dateText(new Date()))}</b></div>
+              <div class="meta-row"><span>Geçerlilik Tarihi</span><b>${safe(dateText(form.valid_until))}</b></div>
+            </div>
+          </div>
+        </div>
+        <div class="info-grid">
+          <div><div class="section-title">MÜŞTERİ BİLGİLERİ</div>
+            <div class="detail-row"><b>Firma</b><span>:</span><span>${safe(customer?.company_name)}</span></div>
+            <div class="detail-row"><b>Yetkili</b><span>:</span><span>${safe(customer?.contact_name)}</span></div>
+            <div class="detail-row"><b>Telefon</b><span>:</span><span>${safe(customer?.phone)}</span></div>
+            <div class="detail-row"><b>E-posta</b><span>:</span><span>${safe(customer?.email)}</span></div>
+          </div>
+          <div><div class="section-title blue">TEKLİF BİLGİLERİ</div><div class="intro">Değerli iş birliğiniz için teşekkür ederiz.<br>Aşağıda detayları belirtilen ürün/hizmetler için teklifimizi bilgilerinize sunarız.</div></div>
+        </div>
+        <table class="items"><thead><tr><th>SIRA</th><th>AÇIKLAMA</th><th>MİKTAR</th><th>BİRİM</th><th>BİRİM FİYAT</th><th>TOPLAM</th></tr></thead><tbody>${rows || '<tr><td colspan="6">-</td></tr>'}</tbody></table>
+        <div class="summary">
+          <div class="sum-row"><div><b>Ara Toplam</b></div><div>${money(totals.subtotal)}</div></div>
+          <div class="sum-row"><div><b>İndirim</b></div><div>${money(totals.discount)}</div></div>
+          <div class="sum-row"><div><b>KDV (%${safe(form.vat_rate)})</b></div><div>${money(totals.vat)}</div></div>
+          <div class="sum-row grand"><div>GENEL TOPLAM</div><div>${money(totals.grand)}</div></div>
+        </div>
+        <div class="bottom-grid"><div><div class="note-title">AÇIKLAMA</div><div class="note-text">${safe(form.notes || '-')}</div></div><div><div class="sign-title">YETKİLİ İMZA / KAŞE</div><div class="sign-line"></div></div></div>
+        <div class="contact"><span>${safe(settings.phone || '')}</span><span>${safe(settings.email || '')}</span><span>${safe(settings.address || 'Bursa / Türkiye')}</span></div><div class="q-footerbar"></div>
+      </div>`
+    document.body.appendChild(sheet)
+    try {
+      await new Promise(resolve => setTimeout(resolve, 120))
+      const canvas = await html2canvas(sheet.querySelector('.q-page'), { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false })
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true })
+      doc.addImage(canvas.toDataURL('image/jpeg', .94), 'JPEG', 0, 0, 210, 297, undefined, 'FAST')
+      doc.save(`${form.quote_no || 'teklif'}.pdf`)
+    } catch (error) {
+      flash(`PDF oluşturulamadı: ${error.message}`)
+    } finally {
+      sheet.remove()
     }
-    doc.setFontSize(18)
-    doc.text(settings.company_name || 'Laserce Metal', 14, settings.logo_data_url ? 38 : 20)
-    doc.setFontSize(10)
-    doc.text(settings.slogan || '', 14, settings.logo_data_url ? 44 : 26)
-
-    doc.setFontSize(16)
-    doc.text('FIYAT TEKLIFI', 145, 20)
-    doc.setFontSize(10)
-    doc.text(`Teklif No: ${form.quote_no || '-'}`, 145, 28)
-    doc.text(`Tarih: ${dateText(new Date())}`, 145, 34)
-    doc.text(`Gecerlilik: ${dateText(form.valid_until)}`, 145, 40)
-
-    doc.setFontSize(11)
-    doc.text(`Firma: ${customer?.company_name || '-'}`, 14, 56)
-    doc.text(`Yetkili: ${customer?.contact_name || '-'}`, 14, 63)
-    doc.text(`Telefon: ${customer?.phone || '-'}`, 14, 70)
-    doc.text(`E-posta: ${customer?.email || '-'}`, 14, 77)
-
-    autoTable(doc, {
-      startY: 88,
-      head: [['Aciklama', 'Miktar', 'Birim', 'Birim Fiyat', 'Toplam']],
-      body: form.items.map(x => [
-        x.description,
-        x.quantity,
-        x.unit,
-        currency(x.unit_price),
-        currency(Number(x.quantity || 0) * Number(x.unit_price || 0))
-      ])
-    })
-
-    const y = doc.lastAutoTable.finalY + 10
-    doc.text(`Ara Toplam: ${currency(totals.subtotal)}`, 135, y)
-    doc.text(`Indirim: ${currency(totals.discount)}`, 135, y + 7)
-    doc.text(`KDV: ${currency(totals.vat)}`, 135, y + 14)
-    doc.setFontSize(12)
-    doc.text(`GENEL TOPLAM: ${currency(totals.grand)}`, 125, y + 24)
-
-    doc.setFontSize(9)
-    doc.text(form.notes || '', 14, y + 35, { maxWidth: 180 })
-    doc.text(`${settings.phone || ''}  ${settings.email || ''}`, 14, 280)
-    doc.save(`${form.quote_no || 'teklif'}.pdf`)
   }
 
   return (
