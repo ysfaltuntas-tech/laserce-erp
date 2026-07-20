@@ -146,3 +146,6 @@ th { color: #6b7280; font-size: 12px; }
   margin-bottom: 10px;
   font-size: 13px;
 }
+
+.user-chip{display:inline-flex;align-items:center;padding:8px 12px;border-radius:999px;background:#eef2f7;font-weight:700;font-size:13px}
+.muted{color:#6b7280;margin-top:-4px;margin-bottom:16px}

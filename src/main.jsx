@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   LayoutDashboard, ClipboardList, Users, Boxes, FileText, UserCog,
-  Settings, Plus, Save, Trash2, Download, Building2, Search, LogOut, LockKeyhole
+  Settings, Plus, Save, Trash2, Download, Building2, Search, LogOut, LockKeyhole, History
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -16,6 +16,7 @@ const menu = [
   ['inventory', 'Stok', Boxes],
   ['quotes', 'Teklif Hazırla', FileText],
   ['operators', 'Operatörler', UserCog],
+  ['history', 'İşlem Geçmişi', History],
   ['settings', 'Ayarlar', Settings],
 ]
 
@@ -42,6 +43,7 @@ const emptyQuote = {
   valid_until: '',
   vat_rate: 20,
   discount_rate: 0,
+  status: 'Beklemede',
   notes: 'Fiyatlar belirtilen teknik resim ve adetlere göre hazırlanmıştır.',
   items: [{ description: '', quantity: 1, unit: 'Adet', unit_price: 0 }]
 }
@@ -85,28 +87,26 @@ function App() {
   const [inventory, setInventory] = useState([])
   const [operators, setOperators] = useState([])
   const [quotes, setQuotes] = useState([])
+  const [logs, setLogs] = useState([])
   const [settings, setSettings] = useState(defaultSettings)
 
   const reload = async () => {
-    if (authLoading) {
-    return <div className="setup-page"><div className="setup-card"><p>Yükleniyor…</p></div></div>
-  }
-
-  if (!supabaseConfigured) {
+    if (!supabaseConfigured) {
       setLoading(false)
       return
     }
     setLoading(true)
     try {
-      const [j, c, i, o, q, s] = await Promise.all([
+      const [j, c, i, o, q, l, s] = await Promise.all([
         query('jobs'),
         query('customers'),
         query('inventory'),
         query('operators'),
         query('quotes'),
+        query('audit_logs'),
         supabase.from('company_settings').select('*').limit(1).maybeSingle()
       ])
-      setJobs(j); setCustomers(c); setInventory(i); setOperators(o); setQuotes(q)
+      setJobs(j); setCustomers(c); setInventory(i); setOperators(o); setQuotes(q); setLogs(l)
       if (s.data) setSettings({ ...defaultSettings, ...s.data })
     } catch (err) {
       setNotice(err.message)
@@ -140,6 +140,10 @@ function App() {
     setTimeout(() => setNotice(''), 3500)
   }
 
+  if (authLoading) {
+    return <div className="setup-page"><div className="setup-card"><p>Yükleniyor…</p></div></div>
+  }
+
   if (!supabaseConfigured) {
     return (
       <div className="setup-page">
@@ -158,6 +162,10 @@ function App() {
   if (!session) {
     return <LoginPage flash={flash} />
   }
+
+  const currentUserName = session.user.email?.toLowerCase() === 'ysf.altuntas@gmail.com'
+    ? 'Yusuf Altuntaş'
+    : session.user.email?.toLowerCase() === 'info@lasercemetal.com.tr' ? 'Yasin' : session.user.email
 
   const signOut = async () => {
     await supabase.auth.signOut()
@@ -193,6 +201,7 @@ function App() {
             <p>{settings.slogan}</p>
           </div>
           <div className="actions">
+            <span className="user-chip">{currentUserName}</span>
             <button className="secondary" onClick={reload}>Yenile</button>
             <button className="secondary" onClick={signOut}><LogOut size={17}/> Çıkış</button>
           </div>
@@ -202,10 +211,11 @@ function App() {
         {loading ? <div className="loading">Yükleniyor…</div> : (
           <>
             {page === 'dashboard' && <Dashboard jobs={jobs} inventory={inventory} quotes={quotes} customers={customers} />}
-            {page === 'jobs' && <Jobs jobs={jobs} customers={customers} operators={operators} reload={reload} flash={flash} />}
-            {page === 'customers' && <Customers customers={customers} reload={reload} flash={flash} />}
-            {page === 'inventory' && <Inventory inventory={inventory} reload={reload} flash={flash} />}
-            {page === 'quotes' && <Quotes quotes={quotes} customers={customers} settings={settings} reload={reload} flash={flash} />}
+            {page === 'jobs' && <Jobs jobs={jobs} customers={customers} operators={operators} logs={logs} reload={reload} flash={flash} />}
+            {page === 'customers' && <Customers customers={customers} logs={logs} reload={reload} flash={flash} />}
+            {page === 'inventory' && <Inventory inventory={inventory} logs={logs} reload={reload} flash={flash} />}
+            {page === 'quotes' && <Quotes quotes={quotes} customers={customers} settings={settings} logs={logs} reload={reload} flash={flash} />}
+            {page === 'history' && <AuditHistory logs={logs} />}
             {page === 'operators' && <Operators operators={operators} reload={reload} flash={flash} />}
             {page === 'settings' && <SettingsPage settings={settings} setSettings={setSettings} flash={flash} />}
           </>
@@ -300,7 +310,13 @@ function Stat({ title, value, danger }) {
   return <div className={`stat ${danger ? 'danger' : ''}`}><span>{title}</span><strong>{value}</strong></div>
 }
 
-function Jobs({ jobs, customers, operators, reload, flash }) {
+
+function creatorFor(logs, table, recordId) {
+  const log = logs.find(x => x.table_name === table && x.record_id === String(recordId) && x.action === 'INSERT')
+  return log?.user_name || log?.user_email || '-'
+}
+
+function Jobs({ jobs, customers, operators, logs, reload, flash }) {
   const [form, setForm] = useState(emptyJob)
   const [search, setSearch] = useState('')
   const filtered = jobs.filter(j =>
@@ -346,10 +362,11 @@ function Jobs({ jobs, customers, operators, reload, flash }) {
 
       <ListHeader title="İş Emirleri" search={search} setSearch={setSearch} />
       <section className="panel">
-        <Table headers={['İş No','Parça','Malzeme','Adet','Termin','Durum','']}>
+        <Table headers={['İş No','Parça','Malzeme','Adet','Termin','Durum','Kaydeden','']}>
           {filtered.map(j => <tr key={j.id}>
             <td>{j.job_no}</td><td>{j.part_name}</td><td>{j.material} {j.thickness ? `${j.thickness} mm` : ''}</td>
             <td>{j.quantity}</td><td>{dateText(j.due_date)}</td><td><Badge>{j.status}</Badge></td>
+            <td>{creatorFor(logs, 'jobs', j.id)}</td>
             <td><button className="icon danger-btn" onClick={() => remove(j.id)}><Trash2 size={16}/></button></td>
           </tr>)}
         </Table>
@@ -358,7 +375,7 @@ function Jobs({ jobs, customers, operators, reload, flash }) {
   )
 }
 
-function Customers({ customers, reload, flash }) {
+function Customers({ customers, logs, reload, flash }) {
   const [form, setForm] = useState(emptyCustomer)
 
   const save = async e => {
@@ -381,9 +398,9 @@ function Customers({ customers, reload, flash }) {
         </form>
       </FormPanel>
       <section className="panel">
-        <Table headers={['Firma','Yetkili','Telefon','E-posta','Adres']}>
+        <Table headers={['Firma','Yetkili','Telefon','E-posta','Adres','Kaydeden']}>
           {customers.map(c => <tr key={c.id}>
-            <td><strong>{c.company_name}</strong></td><td>{c.contact_name}</td><td>{c.phone}</td><td>{c.email}</td><td>{c.address}</td>
+            <td><strong>{c.company_name}</strong></td><td>{c.contact_name}</td><td>{c.phone}</td><td>{c.email}</td><td>{c.address}</td><td>{creatorFor(logs, 'customers', c.id)}</td>
           </tr>)}
         </Table>
       </section>
@@ -391,7 +408,7 @@ function Customers({ customers, reload, flash }) {
   )
 }
 
-function Inventory({ inventory, reload, flash }) {
+function Inventory({ inventory, logs, reload, flash }) {
   const [form, setForm] = useState(emptyStock)
 
   const save = async e => {
@@ -424,10 +441,10 @@ function Inventory({ inventory, reload, flash }) {
         </form>
       </FormPanel>
       <section className="panel">
-        <Table headers={['Malzeme','Kalınlık','Ölçü','Adet','Durum']}>
+        <Table headers={['Malzeme','Kalınlık','Ölçü','Adet','Durum','Kaydeden']}>
           {inventory.map(i => <tr key={i.id}>
             <td>{i.material}</td><td>{i.thickness} mm</td><td>{i.width_mm}×{i.height_mm}</td><td>{i.quantity}</td>
-            <td>{Number(i.quantity) <= Number(i.critical_level) ? <Badge danger>Kritik</Badge> : <Badge>Yeterli</Badge>}</td>
+            <td>{Number(i.quantity) <= Number(i.critical_level) ? <Badge danger>Kritik</Badge> : <Badge>Yeterli</Badge>}</td><td>{creatorFor(logs, 'inventory', i.id)}</td>
           </tr>)}
         </Table>
       </section>
@@ -435,7 +452,7 @@ function Inventory({ inventory, reload, flash }) {
   )
 }
 
-function Quotes({ quotes, customers, settings, reload, flash }) {
+function Quotes({ quotes, customers, settings, logs, reload, flash }) {
   const [form, setForm] = useState(emptyQuote)
 
   const totals = useMemo(() => {
@@ -580,9 +597,9 @@ function Quotes({ quotes, customers, settings, reload, flash }) {
 
       <section className="panel">
         <h2>Teklif Geçmişi</h2>
-        <Table headers={['Teklif No','Tarih','Geçerlilik','Toplam']}>
+        <Table headers={['Teklif No','Tarih','Geçerlilik','Toplam','Kaydeden']}>
           {quotes.map(q => <tr key={q.id}>
-            <td>{q.quote_no}</td><td>{dateText(q.created_at)}</td><td>{dateText(q.valid_until)}</td><td>{currency(q.grand_total)}</td>
+            <td>{q.quote_no}</td><td>{dateText(q.created_at)}</td><td>{dateText(q.valid_until)}</td><td>{currency(q.grand_total)}</td><td>{creatorFor(logs, 'quotes', q.id)}</td>
           </tr>)}
         </Table>
       </section>
@@ -621,6 +638,37 @@ function Operators({ operators, reload, flash }) {
           {operators.map(o => <tr key={o.id}>
             <td>{o.full_name}</td><td>{o.role}</td><td>{o.active ? <Badge>Aktif</Badge> : <Badge danger>Pasif</Badge>}</td>
             <td><button className="secondary small" onClick={() => toggle(o)}>{o.active ? 'Pasif Yap' : 'Aktif Yap'}</button></td>
+          </tr>)}
+        </Table>
+      </section>
+    </>
+  )
+}
+
+
+function AuditHistory({ logs }) {
+  const [search, setSearch] = useState('')
+  const actionText = { INSERT: 'Oluşturdu', UPDATE: 'Güncelledi', DELETE: 'Sildi' }
+  const tableText = {
+    customers: 'Müşteri', jobs: 'İş Emri', inventory: 'Stok', quotes: 'Teklif',
+    quote_items: 'Teklif Satırı', operators: 'Personel', company_settings: 'Firma Ayarı'
+  }
+  const filtered = logs.filter(log =>
+    `${log.user_name} ${log.user_email} ${log.record_label} ${log.table_name} ${log.action}`
+      .toLowerCase().includes(search.toLowerCase())
+  )
+  return (
+    <>
+      <ListHeader title="İşlem Geçmişi" search={search} setSearch={setSearch} />
+      <section className="panel">
+        <p className="muted">Kayıtlar otomatik oluşur; uygulama içinden değiştirilemez veya silinemez.</p>
+        <Table headers={['Tarih / Saat','Kullanıcı','İşlem','Kayıt','Detay']}>
+          {filtered.map(log => <tr key={log.id}>
+            <td>{new Intl.DateTimeFormat('tr-TR', { dateStyle:'short', timeStyle:'short' }).format(new Date(log.created_at))}</td>
+            <td><strong>{log.user_name || log.user_email || 'Sistem'}</strong></td>
+            <td><Badge danger={log.action === 'DELETE'}>{actionText[log.action] || log.action}</Badge></td>
+            <td>{tableText[log.table_name] || log.table_name}</td>
+            <td>{log.record_label || log.record_id || '-'}</td>
           </tr>)}
         </Table>
       </section>
